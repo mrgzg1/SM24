@@ -1,4 +1,4 @@
-let video;//test
+let video; //base
 let bodyPose;
 let poses = [];
 let poseHistory = []; // Array to store pose history

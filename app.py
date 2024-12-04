@@ -49,7 +49,7 @@ class CodeState:
         try:
             ai_response = client.messages.create(
                 model="claude-3-5-sonnet-20241022",
-                max_tokens=1000,
+                max_tokens=3000,
                 temperature=0,
                 system="You are an AI coding assistant that helps evolve a JavaScript application called 'hand.js' based on user feedback. Your goal is to generate an updated version of the entire 'hand.js' file, incorporating user-requested changes while ensuring the app remains robust and functional. Keep the changes incremental and concise. Output the entire updated 'hand.js' file without truncating it. You may reject user requests if they are too extensive or compromise the core body pose detection functionality of the app. OUTPUT THE FULL CODE.",
                 messages=[
@@ -58,7 +58,7 @@ class CodeState:
                         "content": [
                             {
                                 "type": "text",
-                                "text": f"Here is the current state of the code:\n\n{current_state}\n\nPlease update the code based on the following request: {user_prompt}"
+                                "text": f"Here is the current state of the code:\n\n```{current_state}```\n\nPlease update the code based on the following request: \n{user_prompt}"
                             }
                         ]
                     }
@@ -103,7 +103,20 @@ st.set_page_config(page_title="Consensus Flow: Collaborative Body Art", layout="
 
 # Sidebar: User identification
 st.sidebar.title("User Identification")
-username = st.sidebar.text_input("Give yourself an identity")
+
+# Check if username is already in session state
+if 'username' not in st.session_state:
+    username = st.sidebar.text_input("Give yourself an identity")
+    if username:
+        logger.debug("Saving username to session state")
+        st.session_state.username = username
+        # st.write(st.session_state.username)
+        logger.debug(f"Saved username: {st.session_state.username}")  # Debug line
+else:
+    username = st.session_state.username
+    logger.debug(f"Retrieved username from session state: {username}")  # Debug line
+    st.sidebar.text_input("Give yourself an identity", value=username, disabled=False)
+
 if not username:
     st.sidebar.warning("Please enter your legal name to proceed.")
 
