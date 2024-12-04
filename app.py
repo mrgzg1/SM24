@@ -41,41 +41,57 @@ class CodeState:
         logger.info(f"Successfully updated current state to {versioned_file}")
 
     @staticmethod
-    def generate_new_state(user_prompt, state_file):
-        logger.info(f"Generating new state based on user prompt: {user_prompt}")
-        current_state = CodeState.get_current_state(state_file)
+    def generate_new_state(user_prompt, state_file, username):
+        global lock_holder
         
-        # Call Anthropic API using messages API
+        # Try to acquire lock
+        if not mutex.acquire(blocking=False):
+            logger.warning(f"Lock acquisition failed - held by {lock_holder}")
+            raise Exception(f"Another user ({lock_holder}) is currently editing. Please wait and try again.")
+        
+        lock_holder = username
+        logger.info(f"Lock acquired by {username}")
+        
         try:
-            ai_response = client.messages.create(
-                model="claude-3-5-sonnet-20241022",
-                max_tokens=3000,
-                temperature=0,
-                system="You are an AI coding assistant that helps evolve a JavaScript application called 'hand.js' based on user feedback. Your goal is to generate an updated version of the entire 'hand.js' file, incorporating user-requested changes while ensuring the app remains robust and functional. Keep the changes incremental and concise. Output the entire updated 'hand.js' file without truncating it. You may reject user requests if they are too extensive or compromise the core body pose detection functionality of the app. OUTPUT THE FULL CODE. DO NOT SKIP SECTIONS LIKE SUCH: // [Rest of the code remains exactly the same] WRITE THE FULL CODE",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": f"Here is the current state of the code:\n\n```{current_state}```\n\nPlease update the code based on the following request: \n{user_prompt}"
-                            }
-                        ]
-                    }
-                ]
-            )
-        except Exception as e:
-            logger.error(f"Error calling Anthropic API: {str(e)}")
-            raise e
-        else:
-            # Extract new state from AI response
-            new_state = extract_code_from_response(ai_response.content)
-            if new_state:
-                logger.debug("Generated new state from AI response")
-                return new_state
+            logger.info(f"Generating new state based on user prompt: {user_prompt}")
+            current_state = CodeState.get_current_state(state_file)
+            
+            # Call Anthropic API using messages API
+            try:
+                ai_response = client.messages.create(
+                    model="claude-3-5-sonnet-20241022",
+                    max_tokens=3000,
+                    temperature=0,
+                    system="You are an AI coding assistant that helps evolve a JavaScript application called 'hand.js' based on user feedback. Your goal is to generate an updated version of the entire 'hand.js' file, incorporating user-requested changes while ensuring the app remains robust and functional. Keep the changes incremental and concise. Output the entire updated 'hand.js' file without truncating it. You may reject user requests if they are too extensive or compromise the core body pose detection functionality of the app. OUTPUT THE FULL CODE. DO NOT SKIP SECTIONS LIKE SUCH: // [Rest of the code remains exactly the same] WRITE THE FULL CODE",
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": f"Here is the current state of the code:\n\n```{current_state}```\n\nPlease update the code based on the following request: \n{user_prompt}"
+                                }
+                            ]
+                        }
+                    ]
+                )
+            except Exception as e:
+                logger.error(f"Error calling Anthropic API: {str(e)}")
+                raise e
             else:
-                logger.warning("No code changes found in AI response")
-                return current_state
+                # Extract new state from AI response
+                new_state = extract_code_from_response(ai_response.content)
+                if new_state:
+                    logger.debug("Generated new state from AI response")
+                    return new_state
+                else:
+                    logger.warning("No code changes found in AI response")
+                    return current_state
+        finally:
+            # Always release lock
+            mutex.release()
+            lock_holder = None
+            logger.info(f"Lock released by {username}")
 
 
 def extract_code_from_response(response):
@@ -97,7 +113,6 @@ def extract_code_from_response(response):
 
 
 logger.debug(f"Using {default_state_file} as default consensus state file")
-
 # Page config
 st.set_page_config(page_title="Consensus Flow: Collaborative Body Art", layout="wide")
 
@@ -130,6 +145,17 @@ st.subheader("Code Viewer")
 selected_state_file = st.selectbox("Select file version", consensus_state_files, index=len(consensus_state_files)-1)
 state = CodeState.get_current_state(selected_state_file)
 
+# Add delete all button
+if st.sidebar.button("Delete All Versions", type="secondary"):
+    if st.sidebar.button("Confirm Delete All?", type="primary"):
+        # Delete all hand_*.js files except hand_0base.js
+        for file in Path(".").glob("hand_*.js"):
+            if file.name != "hand_0base.js":
+                file.unlink()
+        st.sidebar.success("All versions deleted except base version")
+        # Refresh the page to update the file list
+        st.experimental_rerun()
+
 # Anthropic API setup
 client = anthropic.Anthropic()
 
@@ -155,7 +181,7 @@ if username:
             # Create a loading placeholder
             with st.spinner("🤖 Neural circuits firing... pondering your request..."):
                 try:
-                    new_state = CodeState.generate_new_state(user_message, selected_state_file)
+                    new_state = CodeState.generate_new_state(user_message, selected_state_file, username)
                     
                     # Show diff of changes
                     diff = difflib.unified_diff(state.splitlines(), new_state.splitlines(), lineterm='')
@@ -167,7 +193,7 @@ if username:
                     st.success("Code updated based on your request!")
                 except Exception as e:
                     logger.error(f"Error generating new state: {str(e)}")
-                    st.error("Oops, something went wrong updating the code. Please try again.")
+                    st.error(str(e))
                 finally:
                     st.session_state.generation_in_progress = False
         else:
