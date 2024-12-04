@@ -51,7 +51,7 @@ class CodeState:
                 model="claude-3-5-sonnet-20241022",
                 max_tokens=3000,
                 temperature=0,
-                system="You are an AI coding assistant that helps evolve a JavaScript application called 'hand.js' based on user feedback. Your goal is to generate an updated version of the entire 'hand.js' file, incorporating user-requested changes while ensuring the app remains robust and functional. Keep the changes incremental and concise. Output the entire updated 'hand.js' file without truncating it. You may reject user requests if they are too extensive or compromise the core body pose detection functionality of the app. OUTPUT THE FULL CODE.",
+                system="You are an AI coding assistant that helps evolve a JavaScript application called 'hand.js' based on user feedback. Your goal is to generate an updated version of the entire 'hand.js' file, incorporating user-requested changes while ensuring the app remains robust and functional. Keep the changes incremental and concise. Output the entire updated 'hand.js' file without truncating it. You may reject user requests if they are too extensive or compromise the core body pose detection functionality of the app. OUTPUT THE FULL CODE. DO NOT SKIP SECTIONS LIKE SUCH: // [Rest of the code remains exactly the same] WRITE THE FULL CODE",
                 messages=[
                     {
                         "role": "user",
@@ -140,24 +140,39 @@ if username:
     # Chat interface moved under user identification
     st.sidebar.subheader("Chat with AI to Edit Code")
     user_message = st.sidebar.text_input("Your message to the AI")
-    if st.sidebar.button("Send"):
-        logger.info(f"{username} sent message: {user_message}")
-        
-        try:
-            new_state = CodeState.generate_new_state(user_message, selected_state_file)
+
+    # Initialize generation_in_progress in session state if not present
+    if 'generation_in_progress' not in st.session_state:
+        st.session_state.generation_in_progress = False
+
+    # Disable button when message empty or generation in progress
+    button_disabled = not user_message or st.session_state.generation_in_progress
+    if st.sidebar.button("Send", disabled=button_disabled):
+        if not st.session_state.generation_in_progress:
+            logger.info(f"{username} sent message: {user_message}")
+            st.session_state.generation_in_progress = True
             
-            # Show diff of changes
-            diff = difflib.unified_diff(state.splitlines(), new_state.splitlines(), lineterm='')
-            st.text('\n'.join(diff))
-            
-            CodeState.update_current_state(new_state)
-            logger.info(f"Changes submitted successfully based on {username}'s request")
-            # Show success message on top of the code editor
-            st.success("Code updated based on your request!")
-        except Exception as e:
-            logger.error(f"Error generating new state: {str(e)}")
-            st.error("Oops, something went wrong updating the code. Please try again.")
-        
+            # Create a loading placeholder
+            with st.spinner("🤖 Neural circuits firing... pondering your request..."):
+                try:
+                    new_state = CodeState.generate_new_state(user_message, selected_state_file)
+                    
+                    # Show diff of changes
+                    diff = difflib.unified_diff(state.splitlines(), new_state.splitlines(), lineterm='')
+                    st.text('\n'.join(diff))
+                    
+                    CodeState.update_current_state(new_state)
+                    logger.info(f"Changes submitted successfully based on {username}'s request")
+                    # Show success message on top of the code editor
+                    st.success("Code updated based on your request!")
+                except Exception as e:
+                    logger.error(f"Error generating new state: {str(e)}")
+                    st.error("Oops, something went wrong updating the code. Please try again.")
+                finally:
+                    st.session_state.generation_in_progress = False
+        else:
+            st.warning("Please wait for the current request to complete before submitting a new one.")
+
 else:
     st.info("Please enter your name to view the code.")
     st.code(state, language="javascript")
