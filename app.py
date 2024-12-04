@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 import logging
 import anthropic
+from datetime import datetime
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -16,6 +17,69 @@ lock_holder = None  # Track who holds the lock
 
 # Use hand.js as consensus state file
 consensus_state_file = Path("hand.js")
+
+class CodeState:
+    @staticmethod
+    def get_current_state():
+        logger.debug("Loading consensus state")
+        with open(consensus_state_file, "r") as f:
+            content = f.read()
+            logger.debug(f"Loaded content: {content[:100]}...")  # Log first 100 chars
+            return content
+    
+    @staticmethod
+    def update_current_state(new_state):
+        logger.debug("Updating current state")
+        with open(consensus_state_file, "w") as f:
+            f.write(new_state)
+        logger.info("Successfully updated current state")
+
+    @staticmethod
+    def save_current_state():
+        logger.debug("Saving current state")
+        current_state = CodeState.get_current_state()
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        versioned_file = f"{consensus_state_file.stem}_{timestamp}{consensus_state_file.suffix}"
+        with open(versioned_file, "w") as f:
+            f.write(current_state)
+        logger.info(f"Successfully saved versioned state: {versioned_file}")
+
+    @staticmethod
+    def generate_new_state(user_prompt):
+        logger.info(f"Generating new state based on user prompt: {user_prompt}")
+        current_state = CodeState.get_current_state()
+        
+        # Call Anthropic API using messages API
+        try:
+            ai_response = client.messages.create(
+                model="claude-3-5-sonnet-20241022",
+                max_tokens=1000,
+                temperature=0,
+                system="You are an AI coding assistant that helps evolve a JavaScript application called 'hand.js' based on user feedback. Your goal is to generate an updated version of the entire 'hand.js' file, incorporating user-requested changes while ensuring the app remains robust and functional. Keep the changes incremental and concise. Output the entire updated 'hand.js' file without truncating it. You may reject user requests if they are too extensive or compromise the core body pose detection functionality of the app. OUTPUT THE FULL CODE.",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"Here is the current state of the code:\n\n{current_state}\n\nPlease update the code based on the following request: {user_prompt}"
+                            }
+                        ]
+                    }
+                ]
+            )
+        except Exception as e:
+            logger.error(f"Error calling Anthropic API: {str(e)}")
+            raise e
+        else:
+            # Extract new state from AI response
+            new_state = extract_code_from_response(ai_response.content)
+            if new_state:
+                logger.debug("Generated new state from AI response")
+                return new_state
+            else:
+                logger.warning("No code changes found in AI response")
+                return current_state
 
 
 def extract_code_from_response(response):
@@ -38,35 +102,21 @@ def extract_code_from_response(response):
 
 logger.debug(f"Using hand.js as consensus state file")
 
-def load_consensus_state():
-    logger.debug("Loading consensus state")
-    with open(consensus_state_file, "r") as f:
-        content = f.read()
-        logger.debug(f"Loaded content: {content[:100]}...")  # Log first 100 chars
-        return content
-
-def save_consensus_state(new_state):
-    logger.debug("Saving new consensus state")
-    logger.debug(f"New state content: {new_state[:100]}...")  # Log first 100 chars
-    with open(consensus_state_file, "w") as f:
-        f.write(new_state)
-    logger.info("Successfully saved new state")
-
 # Page config
-st.set_page_config(page_title="Consensus Python Editor", layout="wide")
+st.set_page_config(page_title="Consensus Flow: Collaborative Body Art", layout="wide")
 
 # Sidebar: User identification
 st.sidebar.title("User Identification")
-username = st.sidebar.text_input("Your Name")
+username = st.sidebar.text_input("Give yourself an identity")
 if not username:
-    st.sidebar.warning("Please enter your name to proceed.")
+    st.sidebar.warning("Please enter your legal name to proceed.")
 
 # Main content
-st.title("Consensus Python Editor")
+st.title("Consensus Flow")
 
 # Editor column
 st.subheader("Code Editor")
-state = load_consensus_state()
+state = CodeState.get_current_state()
 
 # Anthropic API setup
 client = anthropic.Anthropic()
@@ -81,43 +131,15 @@ if username:
     if st.button("Send"):
         logger.info(f"{username} sent message: {user_message}")
         
-        # Call Anthropic API using messages API
         try:
-            ai_response = client.messages.create(
-                model="claude-3-5-sonnet-20241022",
-                max_tokens=1000,
-                temperature=0,
-                system="You are an AI assistant that helps edit code. Respond with the updated code based on the user's request.",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": f"Here is the current state of the code:\n\n{state}\n\nPlease update the code based on the following request: {user_message}"
-                            }
-                        ]
-                    }
-                ]
-            )
+            new_state = CodeState.generate_new_state(user_message)
+            CodeState.update_current_state(new_state)
+            CodeState.save_current_state()
+            logger.info(f"Changes submitted successfully based on {username}'s request")
+            st.success("Code updated based on your request!")
         except Exception as e:
-            logger.error(f"Error calling Anthropic API: {str(e)}")
-            st.error("Oops, something went wrong calling the AI assistant. Please try again.")
-        else:
-            # Display AI response
-            st.write("AI Assistant:")
-            st.write(ai_response.content)
-            
-            # Extract and save new state if provided
-            new_state = extract_code_from_response(ai_response.content)
-            if new_state:
-                logger.debug("Saving changes from AI response")
-                save_consensus_state(new_state)
-                logger.info(f"Changes submitted successfully based on {username}'s request")
-                st.success("Code updated based on your request!")
-            else:
-                logger.info("No code changes found in AI response")
-                st.info("The AI did not suggest any code changes.")
+            logger.error(f"Error generating new state: {str(e)}")
+            st.error("Oops, something went wrong updating the code. Please try again.")
         
 else:
     st.info("Please enter your name to edit the code.")
