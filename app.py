@@ -17,13 +17,16 @@ mutex = Lock()
 lock_holder = None  # Track who holds the lock
 
 # Use latest version of hand.js as consensus state file
-consensus_state_file = sorted(Path(".").glob("hand_*.js"))[-1]
+consensus_state_files = sorted(Path(".").glob("hand_*.js"))
+logger.debug("~~~")
+logger.debug(consensus_state_files)
+default_state_file = consensus_state_files[0]
 
 class CodeState:
     @staticmethod
-    def get_current_state():
-        logger.debug("Loading consensus state")
-        with open(consensus_state_file, "r") as f:
+    def get_current_state(state_file):
+        logger.debug(f"Loading consensus state from {state_file}")
+        with open(state_file, "r") as f:
             content = f.read()
             logger.debug(f"Loaded content: {content[:100]}...")  # Log first 100 chars
             return content
@@ -38,9 +41,9 @@ class CodeState:
         logger.info(f"Successfully updated current state to {versioned_file}")
 
     @staticmethod
-    def generate_new_state(user_prompt):
+    def generate_new_state(user_prompt, state_file):
         logger.info(f"Generating new state based on user prompt: {user_prompt}")
-        current_state = CodeState.get_current_state()
+        current_state = CodeState.get_current_state(state_file)
         
         # Call Anthropic API using messages API
         try:
@@ -93,7 +96,7 @@ def extract_code_from_response(response):
     return None
 
 
-logger.debug(f"Using {consensus_state_file} as consensus state file")
+logger.debug(f"Using {default_state_file} as default consensus state file")
 
 # Page config
 st.set_page_config(page_title="Consensus Flow: Collaborative Body Art", layout="wide")
@@ -109,7 +112,10 @@ st.title("Consensus Flow")
 
 # Editor column
 st.subheader("Code Viewer")
-state = CodeState.get_current_state()
+
+# Add dropdown to select file version
+selected_state_file = st.selectbox("Select file version", consensus_state_files, index=len(consensus_state_files)-1)
+state = CodeState.get_current_state(selected_state_file)
 
 # Anthropic API setup
 client = anthropic.Anthropic()
@@ -125,7 +131,7 @@ if username:
         logger.info(f"{username} sent message: {user_message}")
         
         try:
-            new_state = CodeState.generate_new_state(user_message)
+            new_state = CodeState.generate_new_state(user_message, selected_state_file)
             
             # Show diff of changes
             diff = difflib.unified_diff(state.splitlines(), new_state.splitlines(), lineterm='')
@@ -134,7 +140,7 @@ if username:
             CodeState.update_current_state(new_state)
             logger.info(f"Changes submitted successfully based on {username}'s request")
             # Show success message on top of the code editor
-            st.success("Code updated based on your request!", anchor="viewer")
+            st.success("Code updated based on your request!")
         except Exception as e:
             logger.error(f"Error generating new state: {str(e)}")
             st.error("Oops, something went wrong updating the code. Please try again.")
