@@ -6,6 +6,7 @@ from pathlib import Path
 import logging
 import anthropic
 from datetime import datetime
+import difflib
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -125,9 +126,15 @@ if username:
         
         try:
             new_state = CodeState.generate_new_state(user_message)
+            
+            # Show diff of changes
+            diff = difflib.unified_diff(state.splitlines(), new_state.splitlines(), lineterm='')
+            st.text('\n'.join(diff))
+            
             CodeState.update_current_state(new_state)
             logger.info(f"Changes submitted successfully based on {username}'s request")
-            st.success("Code updated based on your request!")
+            # Show success message on top of the code editor
+            st.success("Code updated based on your request!", anchor="viewer")
         except Exception as e:
             logger.error(f"Error generating new state: {str(e)}")
             st.error("Oops, something went wrong updating the code. Please try again.")
